@@ -18,8 +18,8 @@
 
 **重要提示**：运行 `vlm.py` 部署模型需要使用另一个单独的虚拟环境。这个虚拟环境需要能够运行 qwen2.5-vl 系列模型。以下提供一个精简的环境配置供参考：
 ```bash
-conda create -n xxx python=3.10 -y
-conda activate xxx
+conda create -n vlm-reward-env python=3.10 -y
+conda activate vlm-reward-env
 pip install vllm==0.13.0 ray==2.53.0 transformers==4.57.3 openai>=2.14.0 qwen-vl-utils[decord]==0.0.8 requests protobuf
 ```
 
@@ -35,7 +35,12 @@ pip install vllm==0.13.0 ray==2.53.0 transformers==4.57.3 openai>=2.14.0 qwen-vl
 
 `./vlm_reward/vlm.py` 是用于部署 VLM 的代码，其中模型路径、端口都可以修改。
 
-使用前面配置好的虚拟环境，运行 `vlm.py`，默认将 VLM 部署在 `localhost:8000`，并配置模型为 `Qwen/Qwen2.5-VL-7B-Instruct`。具体配置可以在 `vlm.py` 中自行修改。如果进行修改，需要同步修改 `rlinf/workers/reward/reward_worker.py` 中 `init_worker` 函数的相应配置。
+使用前面配置好的虚拟环境，运行以下命令启动 VLM 服务：
+```bash
+python ./vlm_reward/vlm.py
+```
+
+默认将 VLM 部署在 `localhost:8000`，并配置模型为 `Qwen/Qwen2.5-VL-7B-Instruct`。具体配置可以在 `vlm.py` 中自行修改。如果进行修改，需要同步修改 `rlinf/workers/reward/reward_worker.py` 中 `init_worker` 函数的相应配置。
 
 **注意**：在运行后续测试代码之前，请先运行 `vlm.py`。
 
