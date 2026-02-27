@@ -1,77 +1,113 @@
-# RLinf-VLM-Reward
+# RLinf LIBERO VLM Reward
 
-本项目基于 rlinf 框架，将 OpenVLA-OFT 算法中的 PPO 奖励机制替换为基于VLM的reward。
+这个目录现在是 **LIBERO 专用** 的视频 reward 方案。当前内置了 `qwen2_5_vl_vllm` 和 `PRIMO-R1` 两个 backend，服务端是 **可插拔** 的，可以继续接入其它 reward model inference 代码。
 
-## 🛠️ 环境配置
+- 集成架构说明：`vlm_reward/integration.md`
 
-请按照 rlinf 官网指南配置基础环境（推荐使用 `uv` 安装）：
+- 输入：LIBERO rollout 的逐帧视频
+- 输出：任务完成分数（默认二值化为 0/1）
+- 仅在 `env.reward_model.enable=True` 时启用，默认关闭，不影响其他 RLinf 功能
 
-* [安装指南 (Installation)](https://rlinf.readthedocs.io/en/latest/rst_source/start/installation.html)
-* [quickstart配置](https://rlinf.readthedocs.io/en/latest/rst_source/start/vla.html)
+## 1. 启动 Reward 服务（2 卡）
 
-**提醒：**
-在 Quickstart 的 **Step 2** 中，需要修改的配置文件存放位置为：
-* `./examples/embodiment/run_embodiment.sh`
-* `./examples/embodiment/config/maniskill_ppo_openvlaoft_quickstart.yaml`
+服务脚本：`vlm_reward/libero_reward_server.py`
 
-按照 rlinf 官网中的步骤配置的环境用于 rlinf 的 quickstart 测试。
+- 默认 backend：`qwen2_5_vl_vllm`
+- 内置 backend：`qwen2_5_vl_vllm`、`PRIMO-R1`（别名 `primo_r1_vllm`）
+- 内置 Qwen 推理：`vllm.LLM(..., tensor_parallel_size=2)` + `qwen_vl_utils.process_vision_info(...)`
+- 支持通过 `--custom-backend-factory` 注入自定义 backend（不同模型可用不同 inference 实现）
 
-**重要提示**：运行 `vlm.py` 部署模型需要使用另一个单独的虚拟环境。这个虚拟环境需要能够运行 qwen2.5-vl 系列模型。以下提供一个精简的环境配置供参考：
+PRIMO-R1 额外依赖：
+
+- `opencv-python`
+- `Pillow`
+
+示例命令：
+
 ```bash
-conda create -n vlm-reward-env python=3.10 -y
-conda activate vlm-reward-env
-pip install vllm==0.13.0 ray==2.53.0 transformers==4.57.3 openai>=2.14.0 qwen-vl-utils[decord]==0.0.8 requests protobuf
+python vlm_reward/libero_reward_server.py \
+  --backend qwen2_5_vl_vllm \
+  --model-path Qwen/Qwen2.5-VL-7B-Instruct \
+  --gpu-ids 0,1 \
+  --tensor-parallel-size 2 \
+  --port 18080
 ```
 
-**注**：如果环境配置有问题，可以参考以下资源：
-- [Qwen2.5-VL-7B-Instruct 官方文档](https://huggingface.co/Qwen/Qwen2.5-VL-7B-Instruct)
-- [Video-R1 项目环境配置](https://github.com/tulerfeng/Video-R1)
+默认接口：
 
-## 运行代码
+- `POST /score`
+- body: `{"task_text": "...", "video_path": "...", "nframes": 16, "max_pixels": 200704, "backend": "qwen2_5_vl_vllm", "backend_kwargs": {...}}`
 
-**建议**：先将 quickstart 跑通，再进行后续内容。
+`backend_kwargs` 里可选：
 
-### 步骤 1: 启动 VLM 服务
+- `score_mode`: `auto`(默认) / `percentage` / `unit`
 
-`./vlm_reward/vlm.py` 是用于部署 VLM 的代码，其中模型路径、端口都可以修改。
+PRIMO-R1 启动示例（首帧+视频+尾帧）：
 
-使用前面配置好的虚拟环境，运行以下命令启动 VLM 服务：
 ```bash
-python ./vlm_reward/vlm.py
+python vlm_reward/libero_reward_server.py \
+  --backend PRIMO-R1 \
+  --model-path <PRIMO-R1-MODEL-PATH> \
+  --gpu-ids 0,1 \
+  --primo-tensor-parallel-size 1 \
+  --port 18080
 ```
 
-默认将 VLM 部署在 `localhost:8000`，并配置模型为 `Qwen/Qwen2.5-VL-7B-Instruct`。具体配置可以在 `vlm.py` 中自行修改。如果进行修改，需要同步修改 `rlinf/workers/reward/reward_worker.py` 中 `init_worker` 函数的相应配置。
+自定义 backend 示例（将 `my_pkg.my_backend:build_backend` 作为工厂）：
 
-**注意**：在运行后续测试代码之前，请先运行 `vlm.py`。
+```bash
+python vlm_reward/libero_reward_server.py \
+  --backend my_custom_backend \
+  --custom-backend-factory my_pkg.my_backend:build_backend \
+  --port 18080
+```
 
-### 步骤 2: 配置奖励模型
+工厂签名约定：
 
-对于 `maniskill_ppo_openvlaoft_quickstart.yaml` 配置文件，将最后面的 `use_reward_model` 参数从 `False` 改为 `True`。
+- `build_backend(args: argparse.Namespace) -> backend`
+- `backend` 需要实现：
+  - `score_video(task_text, video_path, nframes, max_pixels, backend_kwargs) -> (score, raw_output_text)`
 
-然后按照 quickstart 的步骤进行测试。
+## 2. 在 LIBERO 配置中启用
 
+已在 LIBERO 环境配置里增加字段（默认关闭）：
 
-## 代码修改逻辑
+```yaml
+reward_model:
+  enable: True
+  endpoint: "http://127.0.0.1:18080/score"
+  timeout: 120
+  nframes: 16
+  max_pixels: 200704 # 256 * 28 * 28
+  backend: "qwen2_5_vl_vllm"  # 或 "PRIMO-R1"
+  backend_kwargs: {}
+  video_fps: 4
+  fail_on_request_error: False
+  binary_reward: True
+  success_threshold: 0.5
+```
 
-### 1. 数据结构支持 (`./rlinf/data/io_struct.py`)
-* **`RolloutResult` 类**: 新增 `video_frames` 字段 (List[List[Any]])，用于在不同 Worker 间传递视频帧。
-* **合并与切分**: 修改 `merge_result_list` 和 `_split_single_result_by_group`，增加对 `video_frames` 数据的同步处理逻辑。
+对应文件例如：
 
-### 2. 图像采集 (`./rlinf/workers/rollout/hf/huggingface_worker.py`)
-* **`generate` 函数**:
-    * 从环境输出 (`env_output["obs"]`) 中提取图像。
+- `examples/embodiment/config/env/libero_10.yaml`
+- `examples/embodiment/config/env/libero_goal.yaml`
 
-### 3. VLM 奖励计算 (`./rlinf/workers/reward/reward_worker.py`)
+## 3. 当前 reward 流程（LIBERO）
 
-* **初始化 (`init_worker`)**: 配置本地 API 地址及模型。代码中以 `localhost:8000` 与 `Qwen/Qwen2.5-VL-7B-Instruct` 为例。
+在 `LiberoEnv` 内：
 
-* **核心逻辑 (`compute_batch_rewards_with_model`)**:
-    * 替换原有计算逻辑，改为基于视觉的 API 打分。
-    * **流程**: 输入 RolloutResult → 提取视频/Prompt → 均匀采样 8 帧 → Base64 编码 → 调用 API → 解析 `[SCORE]`。
-    * 采样帧数 `num_frames` 默认为 8，可自行修改。
+1. 每 step 缓存当前帧（用于拼成 episode 视频）
+2. 当 episode 结束（termination/truncation）时：
+   - 按 `nframes=16` 均匀采样（若总帧数不足 16，则用全部帧）
+   - 先写成 mp4 再调用 reward 服务打分
+3. 分数映射为 step reward（再按 `reward_coef` 和 `use_rel_reward` 走原有 RL 逻辑）
 
-* **辅助函数**: 新增 `_build_api_payload` (构造请求)、`_sample_frames` (采样)、`_image_to_base64` (编码)、`_call_api_and_parse` (正则解析分数)。
+请求失败策略：
 
-## 注意事项
+- `fail_on_request_error=False`：记录 warning 并回退到 fallback score（默认）
+- `fail_on_request_error=True`：直接抛错中断，避免静默失败
 
-在构造 API 请求时的 prompt 可能需要根据实际任务进行修改，具体请查看 `rlinf/workers/reward/reward_worker.py` 中的 `_build_api_payload` 函数。
+代码入口：
+
+- `rlinf/envs/libero/libero_env.py`
+- `rlinf/envs/libero/vlm_reward_client.py`

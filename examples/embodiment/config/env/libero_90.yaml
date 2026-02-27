@@ -20,6 +20,21 @@ group_size: 1
 use_fixed_reset_state_ids: True
 use_ordered_reset_state_ids: True
 
+reward_model:
+  enable: False
+  endpoint: "http://127.0.0.1:18080/score"
+  timeout: 120
+  nframes: 16
+  max_pixels: 200704 # 256 * 28 * 28
+  backend: "qwen2_5_vl_vllm"
+  backend_kwargs: {}
+  video_fps: 4
+  fail_on_request_error: False
+  binary_reward: True
+  success_threshold: 0.5
+  keep_temp_video: False
+  temp_video_dir: null
+
 video_cfg:
   save_video: True
   info_on_video: True
