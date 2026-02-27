@@ -40,6 +40,8 @@ Given the task goal and the input video, estimate the current task completion pe
 
 Answer format:
 Please output a numerical number between 1 and 100 indicating the percentage of task completion.
+Do not output any words, explanations, symbols, units, or additional text.
+The response must contain only the number.
 """
 
 PRIMO_R1_SYSTEM_PROMPT = (
@@ -147,15 +149,29 @@ def _parse_score_from_output(output_text: str, score_mode: str = "auto") -> floa
 
     # Prefer parsing inside <answer>; this avoids picking numbers from prompts.
     value = _extract_number_from_text(answer_text)
-    if value is None and not answer_text:
-        # Fallback only when there is no answer tag at all.
-        value = _extract_number_from_text(output_text)
+    if value is None:
+        # Fallback to parsing the full model reply when answer parsing fails.
+        fallback_value = _extract_number_from_text(output_text)
+        if fallback_value is not None:
+            logger.warning(
+                "Score parsing fallback triggered: extracted value from raw model output."
+            )
+            value = fallback_value
     if value is None:
         lower_text = output_text.lower()
         if "success" in lower_text:
+            logger.warning(
+                "Score parsing fallback triggered: matched 'success' keyword in model output."
+            )
             return 1.0
         if "fail" in lower_text:
+            logger.warning(
+                "Score parsing fallback triggered: matched 'fail' keyword in model output."
+            )
             return 0.0
+        logger.warning(
+            "Score parsing failed: cannot extract completion score from model output; fallback reward=0.0."
+        )
         return 0.0
 
     if score_mode == "percentage":
