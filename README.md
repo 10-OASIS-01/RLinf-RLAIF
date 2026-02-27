@@ -1,7 +1,7 @@
 # LIBERO-10 Reward Model Experiments (OpenVLA-OFT + GRPO)
 
 - Reward model integration docs: [vlm_reward/readme.md](./vlm_reward/readme.md)
-- RLinf original README: [Rlinf_readme](./Rlinf_readme)
+- RLinf original README: [Rlinf_readme.md](./Rlinf_readme.md)
 
 This README is the **task playbook** for reproducing our coauthor experiments.
 
