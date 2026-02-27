@@ -1,7 +1,7 @@
 # LIBERO-10 Reward Model Experiments (OpenVLA-OFT + GRPO)
 
 - Reward model integration docs: [vlm_reward/readme.md](./vlm_reward/readme.md)
-- RLinf original README: [Rlinf_readme.md](./Rlinf_readme.md)
+- RLinf original README: [Rlinf_readme](./Rlinf_readme)
 
 This README is the **task playbook** for reproducing our coauthor experiments.
 
@@ -41,10 +41,30 @@ Follow RLinf official LIBERO setup doc first:
 
 - [RL with LIBERO Benchmark](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/libero.html)
 
-Additional packages for PRIMO-R1 reward backend:
+Extra dependencies for VLM reward server (required):
+
+- `vllm`
+- `transformers`
+- `fastapi`
+- `uvicorn`
+- `qwen-vl-utils[decord]`
+
+Quick install (recommended, run at repo root):
 
 ```bash
-pip install opencv-python Pillow
+bash vlm_reward/install_deps.sh
+```
+
+This script runs:
+
+```bash
+uv sync --extra sglang-vllm --active
+```
+
+Additional packages for PRIMO-R1 reward backend (optional, PRIMO only):
+
+```bash
+bash vlm_reward/install_deps.sh --with-primo
 ```
 
 ## 4. Key Files
