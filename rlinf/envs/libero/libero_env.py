@@ -30,6 +30,10 @@ from rlinf.envs.libero.utils import (
     get_libero_wrist_image,
     quat2axisangle,
 )
+from rlinf.envs.libero.vlm_reward_client import (
+    LiberoVLMRewardClient,
+    LiberoVLMRewardConfig,
+)
 from rlinf.envs.libero.venv import ReconfigureSubprocEnv
 from rlinf.envs.utils import (
     list_of_dict_to_dict_of_list,
@@ -78,6 +82,114 @@ class LiberoEnv(gym.Env):
         self.video_cnt = 0
         self.render_images = []
         self.current_raw_obs = None
+
+        self._init_reward_model()
+        self._episode_video_frames: list[list[np.ndarray]] = [
+            [] for _ in range(self.num_envs)
+        ]
+        self._episode_reward_assigned = np.zeros(self.num_envs, dtype=bool)
+        self._episode_score_cache = np.zeros(self.num_envs, dtype=np.float32)
+
+    def _init_reward_model(self):
+        reward_model_cfg = self.cfg.get("reward_model", {})
+        self.use_vlm_reward = bool(reward_model_cfg.get("enable", False))
+        self.vlm_reward_client = None
+        self.vlm_success_threshold = float(
+            reward_model_cfg.get("success_threshold", 0.5)
+        )
+        self.vlm_binary_reward = bool(reward_model_cfg.get("binary_reward", True))
+        if not self.use_vlm_reward:
+            return
+
+        backend_kwargs = reward_model_cfg.get("backend_kwargs", {})
+        if OmegaConf.is_config(backend_kwargs):
+            backend_kwargs = OmegaConf.to_container(
+                backend_kwargs, resolve=True
+            ) or {}
+        if backend_kwargs is None:
+            backend_kwargs = {}
+
+        client_cfg = LiberoVLMRewardConfig(
+            endpoint=reward_model_cfg.get("endpoint", "http://127.0.0.1:18080/score"),
+            timeout=float(reward_model_cfg.get("timeout", 120.0)),
+            nframes=int(reward_model_cfg.get("nframes", 16)),
+            max_pixels=int(reward_model_cfg.get("max_pixels", 256 * 28 * 28)),
+            backend=reward_model_cfg.get("backend", None),
+            backend_kwargs=dict(backend_kwargs),
+            fps=int(reward_model_cfg.get("video_fps", 4)),
+            fail_on_request_error=bool(
+                reward_model_cfg.get("fail_on_request_error", False)
+            ),
+            keep_temp_video=bool(reward_model_cfg.get("keep_temp_video", False)),
+            temp_video_dir=reward_model_cfg.get("temp_video_dir", None),
+        )
+        self.vlm_reward_client = LiberoVLMRewardClient(client_cfg)
+
+    def _normalize_env_idx(
+        self, env_idx: Optional[Union[int, list[int], np.ndarray]]
+    ) -> np.ndarray:
+        if env_idx is None:
+            return np.arange(self.num_envs)
+        if np.isscalar(env_idx):
+            return np.array([int(env_idx)])
+        return np.asarray(env_idx, dtype=int)
+
+    def _reset_episode_video_buffers(
+        self, env_idx: Optional[Union[int, list[int], np.ndarray]] = None
+    ):
+        if not self.use_vlm_reward:
+            return
+        env_ids = self._normalize_env_idx(env_idx)
+        for env_id in env_ids:
+            self._episode_video_frames[env_id] = []
+            self._episode_reward_assigned[env_id] = False
+            self._episode_score_cache[env_id] = 0.0
+
+    def _append_step_frames(
+        self,
+        obs: dict[str, torch.Tensor],
+        env_idx: Optional[Union[int, list[int], np.ndarray]] = None,
+    ):
+        if not self.use_vlm_reward:
+            return
+        full_images = obs.get("full_images", None)
+        if full_images is None:
+            return
+        if isinstance(full_images, torch.Tensor):
+            full_images = full_images.detach().cpu().numpy()
+        else:
+            full_images = np.asarray(full_images)
+
+        env_ids = self._normalize_env_idx(env_idx)
+        for env_id in env_ids:
+            frame = np.asarray(full_images[env_id])
+            if frame.dtype != np.uint8:
+                frame = np.clip(frame, 0, 255).astype(np.uint8)
+            self._episode_video_frames[env_id].append(frame.copy())
+
+    def _score_done_episodes(
+        self, done_mask: np.ndarray, terminations: np.ndarray
+    ) -> np.ndarray:
+        scores = self._episode_score_cache.copy()
+        if not self.use_vlm_reward or self.vlm_reward_client is None:
+            return scores
+
+        done_env_ids = np.where(done_mask)[0]
+        for env_id in done_env_ids:
+            if self._episode_reward_assigned[env_id]:
+                continue
+            fallback_score = float(terminations[env_id])
+            score = self.vlm_reward_client.score_episode(
+                task_text=self.task_descriptions[env_id],
+                frames=self._episode_video_frames[env_id],
+                fallback_score=fallback_score,
+            )
+            if self.vlm_binary_reward:
+                score = 1.0 if score >= self.vlm_success_threshold else 0.0
+            scores[env_id] = float(score)
+            self._episode_score_cache[env_id] = float(score)
+            self._episode_reward_assigned[env_id] = True
+        return scores
 
     def _init_env(self):
         env_fns = self.get_env_fns()
@@ -317,8 +429,7 @@ class LiberoEnv(gym.Env):
         env_idx: Optional[Union[int, list[int], np.ndarray]] = None,
         reset_state_ids=None,
     ):
-        if env_idx is None:
-            env_idx = np.arange(self.num_envs)
+        env_idx = self._normalize_env_idx(env_idx)
 
         if self.is_start:
             reset_state_ids = (
@@ -345,6 +456,8 @@ class LiberoEnv(gym.Env):
 
         obs = self._wrap_obs(self.current_raw_obs)
         self._reset_metrics(env_idx)
+        self._reset_episode_video_buffers(env_idx)
+        self._append_step_frames(obs, env_idx)
         infos = {}
         return obs, infos
 
@@ -359,8 +472,17 @@ class LiberoEnv(gym.Env):
         infos = list_of_dict_to_dict_of_list(info_lists)
         truncations = self.elapsed_steps >= self.cfg.max_episode_steps
         obs = self._wrap_obs(raw_obs)
+        self._append_step_frames(obs)
 
-        step_reward = self._calc_step_reward(terminations)
+        if self.use_vlm_reward:
+            if self.ignore_terminations:
+                done_for_reward = truncations.copy()
+            else:
+                done_for_reward = np.logical_or(terminations, truncations)
+            scores = self._score_done_episodes(done_for_reward, terminations)
+            step_reward = self._calc_step_reward_from_scores(scores)
+        else:
+            step_reward = self._calc_step_reward(terminations)
 
         if self.video_cfg.save_video:
             plot_infos = {
@@ -464,6 +586,15 @@ class LiberoEnv(gym.Env):
         reward_diff = reward - self.prev_step_reward
         self.prev_step_reward = reward
 
+        if self.use_rel_reward:
+            return reward_diff
+        else:
+            return reward
+
+    def _calc_step_reward_from_scores(self, scores: np.ndarray):
+        reward = self.cfg.reward_coef * scores
+        reward_diff = reward - self.prev_step_reward
+        self.prev_step_reward = reward
         if self.use_rel_reward:
             return reward_diff
         else:

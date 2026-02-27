@@ -64,6 +64,9 @@ sglang-vllm = [
     "transformers==4.51.1",
     "sglang[all]==0.4.6.post5",
     "vllm==0.8.5",
+    "fastapi>=0.115,<1.0",
+    "uvicorn[standard]>=0.30,<1.0",
+    "qwen-vl-utils[decord]==0.0.8",
     # uvloop is not compatible with simulators, put it here
     "uvloop==0.21.0",
 ]
