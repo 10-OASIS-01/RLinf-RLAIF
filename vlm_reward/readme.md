@@ -17,7 +17,21 @@
 - 内置 Qwen 推理：`vllm.LLM(..., tensor_parallel_size=2)` + `qwen_vl_utils.process_vision_info(...)`
 - 支持通过 `--custom-backend-factory` 注入自定义 backend（不同模型可用不同 inference 实现）
 
-PRIMO-R1 额外依赖：
+服务端依赖（必需）：
+
+- `vllm`
+- `transformers`
+- `fastapi`
+- `uvicorn`
+- `qwen-vl-utils[decord]`
+
+可用以下方式安装（推荐）：
+
+```bash
+uv sync --extra sglang-vllm --active
+```
+
+PRIMO-R1 额外依赖（仅 PRIMO backend 需要）：
 
 - `opencv-python`
 - `Pillow`

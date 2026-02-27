@@ -606,7 +606,7 @@ def parse_args():
     parser.add_argument(
         "--max-model-len",
         type=int,
-        default=81920,
+        default=16384,
         help="for qwen2_5_vl_vllm backend",
     )
     parser.add_argument(
