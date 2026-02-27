@@ -1,5 +1,38 @@
 # RLinf LIBERO VLM Reward
 
+## 0. 先安装额外依赖（除 RLinf 外）
+
+服务端依赖（必需）：
+
+- `vllm`
+- `transformers`
+- `fastapi`
+- `uvicorn`
+- `qwen-vl-utils[decord]`
+
+推荐快速安装（项目根目录执行）：
+
+```bash
+bash vlm_reward/install_deps.sh
+```
+
+该脚本默认执行：
+
+```bash
+uv sync --extra sglang-vllm --active
+```
+
+PRIMO-R1 额外依赖（仅 PRIMO backend 需要）：
+
+- `opencv-python`
+- `Pillow`
+
+安装 PRIMO 额外依赖：
+
+```bash
+bash vlm_reward/install_deps.sh --with-primo
+```
+
 这个目录现在是 **LIBERO 专用** 的视频 reward 方案。当前内置了 `qwen2_5_vl_vllm` 和 `PRIMO-R1` 两个 backend，服务端是 **可插拔** 的，可以继续接入其它 reward model inference 代码。
 
 - 集成架构说明：`vlm_reward/integration.md`
@@ -16,25 +49,6 @@
 - 内置 backend：`qwen2_5_vl_vllm`、`PRIMO-R1`（别名 `primo_r1_vllm`）
 - 内置 Qwen 推理：`vllm.LLM(..., tensor_parallel_size=2)` + `qwen_vl_utils.process_vision_info(...)`
 - 支持通过 `--custom-backend-factory` 注入自定义 backend（不同模型可用不同 inference 实现）
-
-服务端依赖（必需）：
-
-- `vllm`
-- `transformers`
-- `fastapi`
-- `uvicorn`
-- `qwen-vl-utils[decord]`
-
-可用以下方式安装（推荐）：
-
-```bash
-uv sync --extra sglang-vllm --active
-```
-
-PRIMO-R1 额外依赖（仅 PRIMO backend 需要）：
-
-- `opencv-python`
-- `Pillow`
 
 示例命令：
 
