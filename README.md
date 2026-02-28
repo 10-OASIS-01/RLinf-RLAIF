@@ -1,47 +1,52 @@
-# LIBERO-10 Reward Model Experiments (OpenVLA-OFT + GRPO)
+# LIBERO-10 Reward Model Experiment Manual (Single Doc)
 
-- Reward model integration docs: [vlm_reward/readme.md](./vlm_reward/readme.md)
-- RLinf original README: [Rlinf_readme](./Rlinf_readme)
+This is the only document your collaborator needs to run the full experiment pipeline.
 
-This README is the **task playbook** for reproducing our coauthor experiments.
+- RLinf original project README: [Rlinf_readme](./Rlinf_readme)
+- Reward integration architecture detail: [vlm_reward/integration.md](./vlm_reward/integration.md)
 
-## 1. Experiment Goal
+## 1. Goal
 
-Run RL training on **LIBERO Long / `libero_10`** and compare reward settings:
+Run RL training on `libero_10` (`OpenVLA-OFT + GRPO`) and compare 3 reward settings:
 
-1. Native LIBERO reward (0/1).
-2. `Qwen2.5-VL-7B-Instruct` as reward model.
-3. `PRIMO-R1` as reward model.
+1. Native LIBERO reward (0/1 baseline)
+2. Qwen2.5-VL reward
+3. PRIMO-R1 reward
 
-Target evidence: in training reward curves, show a trend where **PRIMO-R1 > 0/1 reward** (not necessarily fully converged).
+Target evidence: reward curve trend where PRIMO-R1 is better than 0/1 baseline (full convergence is not required).
 
-## 2. Fixed Experimental Setup
+## 2. Fixed Setup
 
-- Task benchmark: `env.train.task_suite_name=libero_10` (Long).
-- VLA model: `OpenVLA-OFT`.
-- RL algorithm: `GRPO`.
-- Use default settings from RLinf LIBERO docs unless explicitly overridden:
-  - [RL with LIBERO Benchmark](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/libero.html)
+- Benchmark: `env.train.task_suite_name=libero_10`
+- Policy: `OpenVLA-OFT`
+- RL algorithm: `GRPO`
+- Training launcher: `bash examples/embodiment/run_embodiment.sh <config_name>`
 
-## 3. Prerequisites
+## 3. How the Reward Pipeline Works
 
-### 3.1 Checkpoints (provided by us)
+For VLM reward runs, scoring is done at episode end in LIBERO env:
 
-Coauthor needs to place these checkpoints on their server:
+1. Env caches frame sequence (`full_images`) each step.
+2. On termination/truncation, env calls reward client with sampled episode video.
+3. Client writes temporary MP4 and requests `POST /score`.
+4. Reward server runs selected backend (`qwen2_5_vl_vllm` or `PRIMO-R1`).
+5. Score returns to env and is mapped into RL reward using existing `reward_coef` and `use_rel_reward` logic.
 
-- OpenVLA-OFT base / SFT checkpoint (for training init)
-- Qwen2.5-VL-7B-Instruct checkpoint
-- PRIMO-R1 checkpoint
+Main implementation files:
 
-Use your local absolute paths in commands below.
+- Env integration: `rlinf/envs/libero/libero_env.py`
+- Reward client: `rlinf/envs/libero/vlm_reward_client.py`
+- Reward server: `vlm_reward/libero_reward_server.py`
 
-### 3.2 Environment
+## 4. Dependencies
 
-Follow RLinf official LIBERO setup doc first:
+First complete RLinf + LIBERO base environment setup from official docs.
 
-- [RL with LIBERO Benchmark](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/libero.html)
+- RL with LIBERO Benchmark: [RL with LIBERO Benchmark](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/libero.html)
 
-Extra dependencies for VLM reward server (required):
+Then install VLM reward server dependencies.
+
+Required server dependencies:
 
 - `vllm`
 - `transformers`
@@ -49,70 +54,77 @@ Extra dependencies for VLM reward server (required):
 - `uvicorn`
 - `qwen-vl-utils[decord]`
 
-Quick install (recommended, run at repo root):
+Recommended install (run at repo root):
 
 ```bash
 bash vlm_reward/install_deps.sh
 ```
 
-This script runs:
+The script runs:
 
 ```bash
 uv sync --extra sglang-vllm --active
 ```
 
-Additional packages for PRIMO-R1 reward backend (optional, PRIMO only):
+PRIMO-R1 additional dependencies (only PRIMO backend needs these):
+
+- `opencv-python`
+- `Pillow`
+
+Install with:
 
 ```bash
 bash vlm_reward/install_deps.sh --with-primo
 ```
 
-## 4. Key Files
+## 5. Checkpoints You Must Prepare
 
-- Reward server: `vlm_reward/libero_reward_server.py`
-- Reward client: `rlinf/envs/libero/vlm_reward_client.py`
-- LIBERO env reward integration: `rlinf/envs/libero/libero_env.py`
-- LIBERO env config template: `examples/embodiment/config/env/libero_10.yaml`
+Use local absolute paths for all model checkpoints:
 
-## 5. Base Config (directly use existing GRPO config)
+- OpenVLA-OFT base/SFT checkpoint (for actor + rollout init)
+- Qwen2.5-VL-7B-Instruct checkpoint
+- PRIMO-R1 checkpoint
 
-Use this existing config directly:
+## 6. Config Files Used in This Manual
+
+Base config:
 
 - `examples/embodiment/config/libero_10_grpo_openvlaoft.yaml`
 
-Before training, only edit checkpoint paths in that file:
+Pre-created experiment configs (already in repo):
+
+- `examples/embodiment/config/libero_10_grpo_openvlaoft_runA.yaml`
+- `examples/embodiment/config/libero_10_grpo_openvlaoft_runB_qwen.yaml`
+- `examples/embodiment/config/libero_10_grpo_openvlaoft_runC_primo.yaml`
+
+Before any run, set model paths in each run config:
 
 - `actor.model.model_path`
 - `rollout.model.model_path`
 - `actor.tokenizer.tokenizer_model`
 
-## 6. Three Runs
+## 7. Reward Server API and Startup
 
-All runs use the same GRPO config and differ only in env reward settings.
+Default endpoint:
 
-### Run A: Native LIBERO 0/1 reward (baseline)
+- `POST http://127.0.0.1:18080/score`
 
-In config:
+Request body fields:
 
-```yaml
-env:
-  train:
-    reward_model:
-      enable: False
-  eval:
-    reward_model:
-      enable: False
-```
+- `task_text`
+- `video_path`
+- `nframes`
+- `max_pixels`
+- optional `backend`
+- optional `backend_kwargs`
 
-Train:
+Health check:
 
 ```bash
-bash examples/embodiment/run_embodiment.sh libero_10_grpo_openvlaoft
+curl http://127.0.0.1:18080/health
 ```
 
-### Run B: Qwen2.5-VL reward
-
-Start reward server:
+Qwen server:
 
 ```bash
 python vlm_reward/libero_reward_server.py \
@@ -120,34 +132,11 @@ python vlm_reward/libero_reward_server.py \
   --model-path <QWEN2.5-VL-7B-INSTRUCT-PATH> \
   --gpu-ids 0,1 \
   --tensor-parallel-size 2 \
+  --max-model-len 16384 \
   --port 18080
 ```
 
-Set reward in config (train/eval both if needed):
-
-```yaml
-reward_model:
-  enable: True
-  endpoint: "http://127.0.0.1:18080/score"
-  nframes: 16
-  max_pixels: 200704
-  backend: "qwen2_5_vl_vllm"
-  backend_kwargs:
-    score_mode: auto
-  fail_on_request_error: True
-  binary_reward: True
-  success_threshold: 0.5
-```
-
-Train:
-
-```bash
-bash examples/embodiment/run_embodiment.sh libero_10_grpo_openvlaoft
-```
-
-### Run C: PRIMO-R1 reward
-
-Start reward server:
+PRIMO server:
 
 ```bash
 python vlm_reward/libero_reward_server.py \
@@ -158,67 +147,91 @@ python vlm_reward/libero_reward_server.py \
   --port 18080
 ```
 
-Set reward in config:
+## 8. Run the 3 Experiments
 
-```yaml
-reward_model:
-  enable: True
-  endpoint: "http://127.0.0.1:18080/score"
-  nframes: 16
-  max_pixels: 200704
-  backend: "PRIMO-R1"
-  backend_kwargs:
-    score_mode: auto
-  fail_on_request_error: True
-  binary_reward: True
-  success_threshold: 0.5
-```
+Use separate terminals when a reward server is required.
 
-Train:
+### 8.1 Run A: Native LIBERO reward (baseline)
+
+Config:
+
+- `examples/embodiment/config/libero_10_grpo_openvlaoft_runA.yaml`
+- `env.train.reward_model.enable=False`
+- `env.eval.reward_model.enable=False`
+
+Start:
 
 ```bash
-bash examples/embodiment/run_embodiment.sh libero_10_grpo_openvlaoft
+bash examples/embodiment/run_embodiment.sh libero_10_grpo_openvlaoft_runA
 ```
 
-## 7. Logging and Curves
+### 8.2 Run B: Qwen2.5-VL reward
 
-Each run writes logs under:
+Config:
 
-- `logs/<timestamp>/`
-- TensorBoard events in that run directory.
+- `examples/embodiment/config/libero_10_grpo_openvlaoft_runB_qwen.yaml`
+- backend is fixed as `qwen2_5_vl_vllm`
 
-Compare training reward curves across the three runs.
-Suggested reported metric:
-
-- episode return / reward trend over training steps.
-
-Use TensorBoard for quick comparison:
+Step 1 (Terminal-1): start Qwen reward server (see Section 7).  
+Step 2 (optional): run health check.  
+Step 3 (Terminal-2): start training:
 
 ```bash
-tensorboard --logdir logs
+bash examples/embodiment/run_embodiment.sh libero_10_grpo_openvlaoft_runB_qwen
 ```
 
-## 8. Minimal Deliverable for Paper Figure
+### 8.3 Run C: PRIMO-R1 reward
 
-You do not need full convergence. Stop at a moderate budget once trend is clear.
+Config:
 
-Expected qualitative result:
+- `examples/embodiment/config/libero_10_grpo_openvlaoft_runC_primo.yaml`
+- backend is fixed as `PRIMO-R1`
 
-- `PRIMO-R1 reward` shows better upward trend than `0/1 reward` baseline on `libero_10`.
+Step 1: stop Qwen server if still running.  
+Step 2 (Terminal-1): start PRIMO reward server (see Section 7).  
+Step 3 (optional): run health check.  
+Step 4 (Terminal-2): start training:
 
-## 9. Troubleshooting
+```bash
+bash examples/embodiment/run_embodiment.sh libero_10_grpo_openvlaoft_runC_primo
+```
 
-- If reward server errors should fail the run, keep:
-  - `fail_on_request_error: True`
-- If reward model output format is unstable, keep:
-  - `backend_kwargs.score_mode: auto`
-- If PRIMO run fails with import error, install:
-  - `opencv-python`, `Pillow`
+## 9. Logs and Curve Comparison
 
-## 10. Repro Checklist (for coauthor)
+Each run writes under configured logger path (default `../results`).
 
-1. Install RLinf + LIBERO dependencies from official doc.
-2. Place 3 checkpoints (OpenVLA-OFT, Qwen2.5-VL, PRIMO-R1).
-3. Edit existing config `libero_10_grpo_openvlaoft.yaml` with your model paths.
-4. Run A/B/C with only reward setting changed.
-5. Export and compare reward curves.
+Suggested comparison metric:
+
+- episode return / reward trend over training steps
+
+TensorBoard:
+
+```bash
+tensorboard --logdir ../results
+```
+
+## 10. Troubleshooting
+
+1. Reward server import errors
+- Run `bash vlm_reward/install_deps.sh`
+- For PRIMO also run `bash vlm_reward/install_deps.sh --with-primo`
+
+2. Reward service unavailable during training
+- Check server process is alive
+- Verify `curl http://127.0.0.1:18080/health` works
+- Verify config `endpoint` matches running port
+
+3. Strict failure policy
+- Keep `fail_on_request_error: True` in runB/runC configs if you prefer fail-fast behavior
+
+4. Output parsing instability
+- Keep `backend_kwargs.score_mode: auto`
+
+## 11. Repro Checklist
+
+1. Complete RLinf + LIBERO base setup.
+2. Install VLM reward dependencies (`vlm_reward/install_deps.sh`).
+3. Prepare 3 checkpoints (OpenVLA-OFT, Qwen2.5-VL, PRIMO-R1).
+4. Fill model paths in runA/runB/runC config files.
+5. Run A/B/C in order and keep logs separate.
+6. Compare curves and report trend.
